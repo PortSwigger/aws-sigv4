@@ -36,6 +36,7 @@ public class SigProfileEditorDialog extends JDialog
     // Http provider
     private JRadioButton httpProviderRadioButton;
     private JTextField httpProviderUrlField;
+    private JTextField httpProviderHeaderField;
 
     private MultilineLabel statusLabel;
     private String newProfileName = null;
@@ -50,6 +51,7 @@ public class SigProfileEditorDialog extends JDialog
         c.gridx = gridx;
         c.gridwidth = gridwidth;
         c.gridheight = gridheight;
+        c.insets = new Insets(2, 2, 2, 2);
         return c;
     }
 
@@ -149,6 +151,9 @@ public class SigProfileEditorDialog extends JDialog
         httpPanel.add(new JLabel("GET Url"), newConstraint(0, 0, GridBagConstraints.LINE_START));
         this.httpProviderUrlField = new JTextFieldHint("", TEXT_FIELD_WIDTH-2, "Required");
         httpPanel.add(this.httpProviderUrlField, newConstraint(1, 0));
+        httpPanel.add(new JLabel("Header"), newConstraint(0, 1, GridBagConstraints.LINE_START));
+        httpProviderHeaderField = new JTextFieldHint("", TEXT_FIELD_WIDTH-2, "Optional");
+        httpPanel.add(httpProviderHeaderField, newConstraint(1, 1));
         providerPanel.add(httpPanel, newConstraint(0, providerPanelY++, GridBagConstraints.LINE_START));
 
         outerPanel.add(providerPanel, newConstraint(0, outerPanelY++, GridBagConstraints.LINE_START));
@@ -215,7 +220,7 @@ public class SigProfileEditorDialog extends JDialog
                     newProfileBuilder.withAccessKeyId(profileKeyIdTextField.getText());
 
                 if (!httpProviderUrlField.getText().equals("")) {
-                    newProfileBuilder.withCredentialProvider(new SigHttpCredentialProvider(httpProviderUrlField.getText()),
+                    newProfileBuilder.withCredentialProvider(new SigHttpCredentialProvider(httpProviderUrlField.getText(), httpProviderHeaderField.getText()),
                             httpProviderRadioButton.isSelected() ? SigProfile.DEFAULT_HTTP_PRIORITY : SigProfile.DISABLED_PRIORITY);
                 }
 
@@ -296,7 +301,8 @@ public class SigProfileEditorDialog extends JDialog
                 }
             }
             if (profile.getHttpCredentialProvider() != null) {
-                httpProviderUrlField.setText(profile.getHttpCredentialProvider().getUrl().toString());
+                httpProviderUrlField.setText(profile.getHttpCredentialProvider().getRequestUri().toString());
+                profile.getHttpCredentialProvider().getCustomHeader().ifPresent(s -> httpProviderHeaderField.setText(s));
                 if (profile.getHttpCredentialProviderPriority() >= 0) {
                     httpProviderRadioButton.doClick();
                 }
@@ -315,6 +321,7 @@ class JTextFieldHint extends JTextField implements FocusListener
     private Color defaultForegroundColor;
     final private Color hintForegroundColor = SigProfileEditorDialog.disabledColor;;
     private String hintText;
+    private boolean isHintSet = true;
 
     public JTextFieldHint(String content, int width, String hintText) {
         // set text below to prevent NullPointerException
@@ -336,7 +343,7 @@ class JTextFieldHint extends JTextField implements FocusListener
     @Override
     public String getText() {
         // make sure we don't return "Optional" when these fields are saved
-        if (getFont().isItalic()) {
+        if (isHintSet) {
             return "";
         }
         return super.getText();
@@ -354,18 +361,19 @@ class JTextFieldHint extends JTextField implements FocusListener
 
     protected void setHintText(final String text) {
         this.hintText = text;
-        if (getFont().isItalic()) {
+        if (isHintSet) {
             displayHintText();
         }
     }
 
     protected void displayHintText() {
-        setFont(new Font(defaultFont.getFamily(), Font.ITALIC, defaultFont.getSize()));
+        isHintSet = true;
         setForeground(hintForegroundColor);
         super.setText(hintText);
     }
 
     private void setUserText(final String text) {
+        isHintSet = false;
         setFont(defaultFont);
         setForeground(defaultForegroundColor);
         super.setText(text);
@@ -373,7 +381,7 @@ class JTextFieldHint extends JTextField implements FocusListener
 
     @Override
     public void focusGained(FocusEvent focusEvent) {
-        if (getFont().isItalic()) {
+        if (isHintSet) {
             setUserText("");
         }
     }
