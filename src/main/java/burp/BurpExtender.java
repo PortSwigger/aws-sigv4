@@ -50,7 +50,7 @@ import java.util.stream.Stream;
 public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtensionStateListener, IMessageEditorTabFactory, IContextMenuFactory
 {
     // make sure to update version in build.gradle as well
-    private static final String EXTENSION_VERSION = "0.2.7";
+    private static final String EXTENSION_VERSION = "0.2.8";
 
     private static final String BURP_SETTINGS_KEY = "JsonSettings";
     private static final String SETTING_VERSION = "ExtensionVersion";
@@ -176,7 +176,8 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
         JButton testProfileButton = new JButton("Test");
         JButton importProfileButton = new JButton("Import");
         JButton exportProfileButton = new JButton("Export");
-        JPanel profileButtonPanel = new JPanel(new GridLayout(7, 1));
+
+        JPanel profileButtonPanel = new JPanel(new GridLayout(7, 1, 0, 5));
         profileButtonPanel.add(addProfileButton);
         profileButtonPanel.add(editProfileButton);
         profileButtonPanel.add(removeProfileButton);
@@ -199,7 +200,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
         profileScrollPane.setPreferredSize(new Dimension(1000, 200));
         GridBagConstraints c000 = new GridBagConstraints(); c000.gridy = 0; c000.gridwidth = 2; c000.anchor = GridBagConstraints.FIRST_LINE_START;
         GridBagConstraints c001 = new GridBagConstraints(); c001.gridy = 1; c001.gridwidth = 2; c001.anchor = GridBagConstraints.FIRST_LINE_START; c001.insets = new Insets(10, 0, 10, 0);
-        GridBagConstraints c002 = new GridBagConstraints(); c002.gridy = 2; c002.gridx = 0; c002.anchor = GridBagConstraints.FIRST_LINE_START;
+        GridBagConstraints c002 = new GridBagConstraints(); c002.gridy = 2; c002.gridx = 0; c002.anchor = GridBagConstraints.FIRST_LINE_START; c002.insets = new Insets(0, 0, 0, 5);
         GridBagConstraints c003 = new GridBagConstraints(); c003.gridy = 2; c003.gridx = 1; c003.anchor = GridBagConstraints.FIRST_LINE_START;
         profilePanel.add(profileLabel, c000);
         profilePanel.add(new JLabel("Add AWS credentials using your \"aws_access_key_id\" and \"aws_secret_access_key\"."), c001);
@@ -216,7 +217,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
         customHeadersOverwriteCheckbox = new JCheckBox("Overwrite existing headers");
         customHeadersOverwriteCheckbox.setToolTipText("Default behavior is to append these headers even if they exist in original request");
         JPanel customHeadersButtonPanel = new JPanel();
-        customHeadersButtonPanel.setLayout(new GridLayout(3, 1));
+        customHeadersButtonPanel.setLayout(new GridLayout(3, 1, 0, 5));
         JButton addCustomHeaderButton = new JButton("Add");
         JButton removeCustomHeaderButton = new JButton("Remove");
         customHeadersButtonPanel.add(addCustomHeaderButton);
@@ -230,7 +231,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
         GridBagConstraints c100 = new GridBagConstraints(); c100.gridy = 0; c100.gridwidth = 2; c100.anchor = GridBagConstraints.FIRST_LINE_START;
         GridBagConstraints c101 = new GridBagConstraints(); c101.gridy = 1; c101.gridwidth = 2; c101.anchor = GridBagConstraints.FIRST_LINE_START; c101.insets = new Insets(10, 0, 10, 0);
         GridBagConstraints c102 = new GridBagConstraints(); c102.gridy = 2; c102.gridx = 1; c102.anchor = GridBagConstraints.FIRST_LINE_START;
-        GridBagConstraints c103 = new GridBagConstraints(); c103.gridy = 3; c103.gridx = 0; c103.anchor = GridBagConstraints.FIRST_LINE_START;
+        GridBagConstraints c103 = new GridBagConstraints(); c103.gridy = 3; c103.gridx = 0; c103.anchor = GridBagConstraints.FIRST_LINE_START; c103.insets = new Insets(0, 0, 0, 5);
         GridBagConstraints c104 = new GridBagConstraints(); c104.gridy = 3; c104.gridx = 1; c104.anchor = GridBagConstraints.FIRST_LINE_START;
         customHeadersPanel.add(customHeadersLabel, c100);
         customHeadersPanel.add(new JLabel("Add request headers to be included in the signature. These can be edited in place."), c101);
@@ -591,8 +592,10 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
                 .additionalSignedHeaderNames(getAdditionalSignedHeadersFromUI())
                 .inScopeOnly(this.inScopeOnlyCheckBox.isSelected())
                 .preserveHeaderOrder(this.advancedSettingsDialog.preserveHeaderOrderCheckBox.isSelected())
+                .updateContentSha256(this.advancedSettingsDialog.updateContentSha256CheckBox.isSelected())
                 .presignedUrlLifetimeInSeconds(this.advancedSettingsDialog.getPresignedUrlLifetimeSeconds())
                 .contentMD5HeaderBehavior(this.advancedSettingsDialog.getContentMD5HeaderBehavior())
+                .signingEnabledForProxy(advancedSettingsDialog.signingEnabledForProxyCheckbox.isSelected())
                 .signingEnabledForSpider(advancedSettingsDialog.signingEnabledForSpiderCheckBox.isSelected())
                 .signingEnabledForScanner(advancedSettingsDialog.signingEnabledForScannerCheckBox.isSelected())
                 .signingEnabledForIntruder(advancedSettingsDialog.signingEnabledForIntruderCheckBox.isSelected())
@@ -720,7 +723,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
     @Override
     public List<JMenuItem> createMenuItems(IContextMenuInvocation invocation)
     {
-        JMenu menu = new JMenu(DISPLAY_NAME);
+        JMenu menu = new JMenu("Default Profile");
 
         // add disable item
         JRadioButtonMenuItem item = new JRadioButtonMenuItem("Disabled", !isSigningEnabled());
@@ -933,6 +936,35 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
                     });
                     list.add(editSignatureItem);
                 }
+                break;
+            case IContextMenuInvocation.CONTEXT_MESSAGE_VIEWER_RESPONSE:
+                final IHttpRequestResponse[] selectedMessages = invocation.getSelectedMessages();
+                if (selectedMessages == null || selectedMessages.length < 1) {
+                    break;
+                }
+                final int[] bounds = invocation.getSelectionBounds();
+                if (bounds == null || (bounds[1] - bounds[0] < 90)) {
+                    // expect at least 90 chars for API credentials with a key id and secret.
+                    break;
+                }
+                JMenuItem importItem = new JMenuItem("Import Selected Credential");
+                importItem.addActionListener(actionEvent -> {
+                    final byte[] selection = Arrays.copyOfRange(selectedMessages[0].getResponse(), bounds[0], bounds[1]);
+                    try {
+                        Optional<SigProfile> profile = JSONCredentialParser.profileFromJSON(new String(selection));
+                        if (profile.isPresent()) {
+                            SigProfileEditorDialog dialog = new SigProfileEditorDialog(null, "Import Credential", true, null);
+                            dialog.applyProfile(profile.get());
+                            dialog.setVisible(true);
+                        } else {
+                            logger.error("Invalid JSON credentials object");
+                        }
+                    } catch (JsonSyntaxException e) {
+                        logger.error("Invalid JSON credentials object");
+                    }
+                });
+                list.add(importItem);
+                break;
         }
         return list;
     }
@@ -1004,7 +1036,8 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
 
         for (final String name : getSortedProfileNames()) {
             SigProfile profile = this.profileNameMap.get(name);
-            model.addRow(new Object[]{profile.getName(), profile.getAccessKeyIdForProfileSelection(), profile.getActiveProvider().getName(), profile.getRegion(), profile.getService()});
+            final String activeProviderName = (profile.getActiveProvider() != null) ? profile.getActiveProvider().getName() : "";
+            model.addRow(new Object[]{profile.getName(), profile.getAccessKeyIdForProfileSelection(), activeProviderName, profile.getRegion(), profile.getService()});
             defaultProfileComboBox.addItem(name);
         }
         setDefaultProfileName(defaultProfileName);
@@ -1338,6 +1371,9 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
             return null;
         }
 
+        // copy body, used later in mutiple places
+        final byte[] body = Arrays.copyOfRange(originalRequestBytes, request.getBodyOffset(), originalRequestBytes.length);
+
         // for s3, use payload signing if present in the original request. default to no signing
         boolean signedPayload = false;
         if (StringUtils.equalsIgnoreCase(service, "s3")) {
@@ -1347,13 +1383,26 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
             // s3 signer may throw an error if this header is already present
             signedHeaderMap.remove("x-amz-content-sha256"); // s3 payload hash
         }
+        // Support for x-amz-content-sha256 header for non-s3 services
+        else if ( advancedSettingsDialog.updateContentSha256CheckBox.isSelected() &&
+                signedHeaderMap.containsKey("x-amz-content-sha256")) {
+            try {
+                byte[] digest = MessageDigest.getInstance("SHA-256").digest( body);
+                Formatter digest_f = new Formatter();
+                for( byte b : digest )
+                    digest_f.format("%02x", b & 0xff);
+                signedHeaderMap.replace( "x-amz-content-sha256",
+                    Collections.singletonList( digest_f.toString()));
+            } catch( NoSuchAlgorithmException e){
+                logger.error( "SHA-256 Algorithm doesn't exist!!!");
+            }
+        }
 
         // signer will add these headers and may complain if they're already present
         signedHeaderMap.remove("x-amz-date"); // all signed requests have this
         signedHeaderMap.remove("x-amz-security-token");
         signedHeaderMap.remove("host");
 
-        final byte[] body = Arrays.copyOfRange(originalRequestBytes, request.getBodyOffset(), originalRequestBytes.length);
         SdkHttpFullRequest.Builder awsRequestBuilder = SdkHttpFullRequest.builder()
                 .headers(signedHeaderMap)
                 .uri(uri)
