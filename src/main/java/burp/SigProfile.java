@@ -2,6 +2,8 @@ package burp;
 
 import burp.error.SigCredentialProviderException;
 import org.apache.commons.lang3.StringUtils;
+import software.amazon.awssdk.profiles.Profile;
+import software.amazon.awssdk.profiles.ProfileFile;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,6 +24,7 @@ public class SigProfile implements Cloneable
     public static final int DEFAULT_STATIC_PRIORITY = 100;
     public static final int DEFAULT_HTTP_PRIORITY = 20;
     public static final int DEFAULT_ASSUMEROLE_PRIORITY = 50;
+    public static final int DEFAULT_AWS_PROFILE_PRIORITY = 60;
     public static final int DISABLED_PRIORITY = -1;
 
     private static final transient LogWriter logger = LogWriter.getLogger();
@@ -36,10 +39,10 @@ public class SigProfile implements Cloneable
     private HashMap<String, Integer> credentialProvidersPriority;
 
     // see https://docs.aws.amazon.com/IAM/latest/APIReference/API_AccessKey.html
-    public static final Pattern profileNamePattern = Pattern.compile("^[\\w+=,.@-]{1,64}$");
+    public static final Pattern profileNamePattern = Pattern.compile("^[\\w+=,\\.@\\-]{1,64}$");
     public static final Pattern accessKeyIdPattern = Pattern.compile("^[\\w]{16,128}$");
     public static final Pattern regionPattern = Pattern.compile("^[a-zA-Z]{1,4}-(?:gov-)?[a-zA-Z]{1,16}-[0-9]{1,2}$");
-    public static final Pattern servicePattern = Pattern.compile("^[\\w_-]{1,64}$");
+    public static final Pattern servicePattern = Pattern.compile("^[\\w_\\.\\-]{1,64}$");
 
     public String getName() { return this.name; }
     public SigAssumeRoleCredentialProvider getAssumeRole()
@@ -66,6 +69,11 @@ public class SigProfile implements Cloneable
         return (SigHttpCredentialProvider) getCredentialProviderByName(SigHttpCredentialProvider.PROVIDER_NAME);
     }
 
+    public SigAwsProfileCredentialProvider getAwsProfileCredentialProvider()
+    {
+        return (SigAwsProfileCredentialProvider) getCredentialProviderByName(SigAwsProfileCredentialProvider.PROVIDER_NAME);
+    }
+
     public int getStaticCredentialProviderPriority()
     {
         SigCredentialProvider provider = getStaticCredentialProvider();
@@ -85,6 +93,14 @@ public class SigProfile implements Cloneable
     public int getHttpCredentialProviderPriority()
     {
         SigCredentialProvider provider = getHttpCredentialProvider();
+        if (provider != null)
+            return credentialProvidersPriority.get(provider.getName());
+        return DISABLED_PRIORITY;
+    }
+
+    public int getAwsProfileCredentialProviderPriority()
+    {
+        SigCredentialProvider provider = getAwsProfileCredentialProvider();
         if (provider != null)
             return credentialProvidersPriority.get(provider.getName());
         return DISABLED_PRIORITY;
@@ -294,6 +310,25 @@ public class SigProfile implements Cloneable
             configPath = Paths.get(System.getProperty("user.home"), ".aws", "config");
         }
         return configPath;
+    }
+
+    public static List<SigProfile> fromCLIConfig() {
+        List<SigProfile> profileList = new ArrayList<>();
+        SigAwsProfileCredentialProvider.getAvailableProfileNames().forEach(name -> {
+            var awsProfileOption = ProfileFile.defaultProfileFile().profile(name);
+            if (awsProfileOption.isPresent()) {
+                final Profile awsProfile = awsProfileOption.get();
+                Builder newProfileBuilder = new Builder(name)
+                        .withService("")
+                        .withCredentialProvider(new SigAwsProfileCredentialProvider(name), SigProfile.DEFAULT_AWS_PROFILE_PRIORITY);
+                awsProfile.property("aws_access_key_id")
+                                .ifPresent(newProfileBuilder::withAccessKeyId);
+                awsProfile.property("region")
+                        .ifPresent(newProfileBuilder::withRegion);
+                profileList.add(newProfileBuilder.build());
+            }
+        });
+        return profileList;
     }
 
     // refs: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
