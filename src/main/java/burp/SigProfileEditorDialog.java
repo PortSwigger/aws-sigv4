@@ -7,6 +7,7 @@ import java.awt.event.ActionListener;
 import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
 import java.time.Instant;
+import java.util.List;
 
 public class SigProfileEditorDialog extends JDialog
 {
@@ -35,10 +36,13 @@ public class SigProfileEditorDialog extends JDialog
 
     // Http provider
     private JRadioButton httpProviderRadioButton;
+    private JRadioButton awsProfileProviderRadioButton;
     private JTextField httpProviderUrlField;
     private JTextField httpProviderHeaderField;
 
-    private MultilineLabel statusLabel;
+    private JTextField awsProfileNameField;
+
+    private JLabel statusLabel;
     private String newProfileName = null;
 
     // allow creator of dialog to get the profile that was created
@@ -74,6 +78,7 @@ public class SigProfileEditorDialog extends JDialog
     public SigProfileEditorDialog(Frame owner, String title, boolean modal, SigProfile profile)
     {
         super(owner, title, modal);
+        setResizable(false);
         setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
         JPanel outerPanel = new JPanel(new GridBagLayout());
@@ -107,14 +112,17 @@ public class SigProfileEditorDialog extends JDialog
         staticProviderRadioButton.setSelected(true); //default
         assumeRoleProviderRadioButton = new JRadioButton("AssumeRole");
         httpProviderRadioButton = new JRadioButton("HttpGet");
+        awsProfileProviderRadioButton = new JRadioButton("AWS Profile");
         ButtonGroup providerButtonGroup = new ButtonGroup();
         providerButtonGroup.add(staticProviderRadioButton);
         providerButtonGroup.add(assumeRoleProviderRadioButton);
         providerButtonGroup.add(httpProviderRadioButton);
+        providerButtonGroup.add(awsProfileProviderRadioButton);
         JPanel providerButtonPanel = new JPanel(new FlowLayout());
         providerButtonPanel.add(staticProviderRadioButton);
         providerButtonPanel.add(assumeRoleProviderRadioButton);
         providerButtonPanel.add(httpProviderRadioButton);
+        providerButtonPanel.add(awsProfileProviderRadioButton);
         providerPanel.add(providerButtonPanel, newConstraint(0, providerPanelY++, GridBagConstraints.LINE_START));
 
         // panel for static credentials
@@ -156,8 +164,34 @@ public class SigProfileEditorDialog extends JDialog
         httpPanel.add(httpProviderHeaderField, newConstraint(1, 1));
         providerPanel.add(httpPanel, newConstraint(0, providerPanelY++, GridBagConstraints.LINE_START));
 
+        // panel for AWS profile creds
+        JPanel awsProfilePanel = new JPanel(new GridBagLayout());
+        awsProfilePanel.setBorder(new TitledBorder("AWS Profile Credentials"));
+        awsProfilePanel.add(new JLabel("Profile Name"), newConstraint(0, 0, GridBagConstraints.LINE_START));
+        this.awsProfileNameField = new JTextFieldHint("", TEXT_FIELD_WIDTH-2, "Required");
+        awsProfilePanel.add(this.awsProfileNameField, newConstraint(1, 0));
+        // build combobox of all profile names so user can populate the name field automatically
+        JComboBox<String> awsProfileNameComboBox = new JComboBox<>();
+        awsProfileNameComboBox.addItem("<select>");
+        ActionListener awsProfileSelectionListener = actionEvent -> {
+            final String profileName = (String)awsProfileNameComboBox.getSelectedItem();
+            if (profileName != null && !profileName.equals("<select>")) {
+                awsProfileNameField.setText(profileName);
+                if (nameTextField.getText().equals("")) {
+                    // autofill the profile name if it's empty
+                    nameTextField.setText(profileName);
+                }
+            }
+            awsProfileNameComboBox.setSelectedIndex(0); // reset to "<select>"
+        };
+        awsProfileNameComboBox.addActionListener(awsProfileSelectionListener);
+        List<String> awsProfileOptions = SigAwsProfileCredentialProvider.getAvailableProfileNames();
+        awsProfileOptions.forEach(awsProfileNameComboBox::addItem);
+        awsProfilePanel.add(awsProfileNameComboBox, newConstraint(1, 1, GridBagConstraints.BASELINE_LEADING));
+        providerPanel.add(awsProfilePanel, newConstraint(0, providerPanelY++, GridBagConstraints.LINE_START));
+
         outerPanel.add(providerPanel, newConstraint(0, outerPanelY++, GridBagConstraints.LINE_START));
-        statusLabel = new MultilineLabel("Ok to submit");
+        statusLabel = new JLabel("Ok to submit");
         Font defaultFont = statusLabel.getFont();
         statusLabel.setFont(new Font(defaultFont.getFamily(), Font.ITALIC, defaultFont.getSize()));
         statusLabel.setForeground(BurpExtender.textOrange);
@@ -174,6 +208,7 @@ public class SigProfileEditorDialog extends JDialog
             staticCredentialsPanel.setVisible(staticProviderRadioButton.isSelected());
             rolePanel.setVisible(assumeRoleProviderRadioButton.isSelected());
             httpPanel.setVisible(httpProviderRadioButton.isSelected());
+            awsProfilePanel.setVisible(awsProfileProviderRadioButton.isSelected());
             if (actionEvent.getSource().equals(assumeRoleProviderRadioButton)) {
                 staticCredentialsPanel.setVisible(true);
             }
@@ -182,6 +217,7 @@ public class SigProfileEditorDialog extends JDialog
         this.staticProviderRadioButton.addActionListener(providerButtonActionListener);
         this.assumeRoleProviderRadioButton.addActionListener(providerButtonActionListener);
         this.httpProviderRadioButton.addActionListener(providerButtonActionListener);
+        this.awsProfileProviderRadioButton.addActionListener(providerButtonActionListener);
 
         cancelButton.addActionListener(actionEvent -> {
             setVisible(false);
@@ -193,19 +229,32 @@ public class SigProfileEditorDialog extends JDialog
             final String secretKey = secretKeyTextField.getText();
             final String sessionToken = sessionTokenTextField.getText();
 
+            SigCredential staticCredential = null;
             try {
-                if (profile != null && !roleArnTextField.getText().equals("")) {
-                    // edit dialog
-                    final SigStaticCredential staticCredential = new SigStaticCredential(accessKeyIdTextField.getText(), secretKeyTextField.getText());
-                    if (profile.getAssumeRole() != null) {
+                if (!sessionToken.isEmpty()) {
+                    staticCredential = new SigTemporaryCredential(accessKeyId, secretKey, sessionToken, Instant.now().getEpochSecond() + 86400);
+                } else {
+                    staticCredential = new SigStaticCredential(accessKeyId, secretKey);
+                }
+            } catch (IllegalArgumentException ignore) {
+                // ignore
+            }
+
+            try {
+                if (!roleArnTextField.getText().isEmpty()) {
+                    if (staticCredential == null) {
+                        throw new IllegalArgumentException("AssumeRole profile requires credentials");
+                    }
+                    if (profile != null && profile.getAssumeRole() != null) {
+                        // edit existing AssumeRole profile
                         assumeRole = new SigAssumeRoleCredentialProvider.Builder(profile.getAssumeRole())
                                 .withRoleArn(roleArnTextField.getText())
                                 .withCredential(staticCredential)
                                 .tryExternalId(externalIdTextField.getText())
                                 .tryRoleSessionName(sessionNameTextField.getText())
                                 .build();
-                    }
-                    else {
+                    } else {
+                        // new AssumeRole profile
                         assumeRole = new SigAssumeRoleCredentialProvider.Builder(roleArnTextField.getText(), staticCredential)
                                 .tryExternalId(externalIdTextField.getText())
                                 .tryRoleSessionName(sessionNameTextField.getText())
@@ -216,23 +265,25 @@ public class SigProfileEditorDialog extends JDialog
                 SigProfile.Builder newProfileBuilder = new SigProfile.Builder(nameTextField.getText())
                         .withRegion(regionTextField.getText())
                         .withService(serviceTextField.getText());
-                if (!profileKeyIdTextField.getText().equals(""))
+                if (!profileKeyIdTextField.getText().isEmpty())
                     newProfileBuilder.withAccessKeyId(profileKeyIdTextField.getText());
 
-                if (!httpProviderUrlField.getText().equals("")) {
+                if (!httpProviderUrlField.getText().isEmpty()) {
                     newProfileBuilder.withCredentialProvider(new SigHttpCredentialProvider(httpProviderUrlField.getText(), httpProviderHeaderField.getText()),
                             httpProviderRadioButton.isSelected() ? SigProfile.DEFAULT_HTTP_PRIORITY : SigProfile.DISABLED_PRIORITY);
+                }
+
+                if (!awsProfileNameField.getText().isEmpty()) {
+                    newProfileBuilder.withCredentialProvider(new SigAwsProfileCredentialProvider(awsProfileNameField.getText()),
+                            awsProfileProviderRadioButton.isSelected() ? SigProfile.DEFAULT_AWS_PROFILE_PRIORITY : SigProfile.DISABLED_PRIORITY);
                 }
 
                 if (assumeRole != null)
                     newProfileBuilder.withCredentialProvider(assumeRole, assumeRoleProviderRadioButton.isSelected() ? SigProfile.DEFAULT_ASSUMEROLE_PRIORITY : SigProfile.DISABLED_PRIORITY);
 
                 // if any cred fields are specified, attempt to use them.
-                if (!accessKeyId.equals("") || !secretKey.equals("") || !sessionToken.equals("")) {
-                    SigCredential credential = new SigStaticCredential(accessKeyIdTextField.getText(), secretKeyTextField.getText());
-                    if (!sessionToken.equals(""))
-                        credential = new SigTemporaryCredential(accessKeyId, secretKey, sessionToken, Instant.now().getEpochSecond() + 900);
-                    newProfileBuilder.withCredentialProvider(new SigStaticCredentialProvider(credential), SigProfile.DEFAULT_STATIC_PRIORITY);
+                if (staticCredential != null) {
+                    newProfileBuilder.withCredentialProvider(new SigStaticCredentialProvider(staticCredential), SigProfile.DEFAULT_STATIC_PRIORITY);
                 }
 
                 final SigProfile newProfile = newProfileBuilder.build();
@@ -252,6 +303,7 @@ public class SigProfileEditorDialog extends JDialog
         staticCredentialsPanel.setVisible(staticProviderRadioButton.isSelected());
         httpPanel.setVisible(httpProviderRadioButton.isSelected());
         rolePanel.setVisible(assumeRoleProviderRadioButton.isSelected());
+        awsProfilePanel.setVisible(awsProfileProviderRadioButton.isSelected());
         applyProfile(profile);
 
         add(outerPanel);
@@ -305,6 +357,12 @@ public class SigProfileEditorDialog extends JDialog
                 profile.getHttpCredentialProvider().getCustomHeader().ifPresent(s -> httpProviderHeaderField.setText(s));
                 if (profile.getHttpCredentialProviderPriority() >= 0) {
                     httpProviderRadioButton.doClick();
+                }
+            }
+            if (profile.getAwsProfileCredentialProvider() != null) {
+                awsProfileNameField.setText(profile.getAwsProfileCredentialProvider().getProfileName());
+                if (profile.getAwsProfileCredentialProviderPriority() >= 0) {
+                    awsProfileProviderRadioButton.doClick();
                 }
             }
         }

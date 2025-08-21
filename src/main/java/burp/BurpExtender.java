@@ -27,6 +27,8 @@ import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.MalformedURLException;
@@ -50,7 +52,7 @@ import java.util.stream.Stream;
 public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtensionStateListener, IMessageEditorTabFactory, IContextMenuFactory
 {
     // make sure to update version in build.gradle as well
-    private static final String EXTENSION_VERSION = "0.2.8";
+    private static final String EXTENSION_VERSION = "0.2.9";
 
     private static final String BURP_SETTINGS_KEY = "JsonSettings";
     private static final String SETTING_VERSION = "ExtensionVersion";
@@ -193,6 +195,14 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
             {
                 // prevent table cells from being edited. must use dialog to edit.
                 return false;
+            }
+        });
+        profileTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    editProfileButton.doClick();
+                }
             }
         });
 
@@ -355,8 +365,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
 
                     // don't block the UI thread
                     (new Thread(() -> {
-                        try {
-                            StsClient stsClient = StsClient.builder()
+                        try (StsClient stsClient = StsClient.builder()
                                     .httpClient(new SdkHttpClientForBurp())
                                     .region(Region.US_EAST_1)
                                     .credentialsProvider(() -> {
@@ -366,15 +375,15 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
                                         }
                                         return AwsBasicCredentials.create(cred.getAccessKeyId(), cred.getSecretKey());
                                     })
-                                    .build();
-                            GetCallerIdentityResponse response = stsClient.getCallerIdentity();
-                            JDialog dialog = new SigProfileTestDialog(null, profile, false, response);
+                                    .build()) {
+                            SigProfileTestDialog dialog = new SigProfileTestDialog(null, profile, false);
                             dialog.setVisible(true);
-                        } catch (SigCredentialProviderException | StsException exc) {
-                            // TODO: line wrap
+                            GetCallerIdentityResponse response = stsClient.getCallerIdentity();
+                            dialog.updateWithResult(response);
+                        } catch (Exception exc) {
                             JOptionPane.showMessageDialog(getUiComponent(),
                                     exc.getMessage(),
-                                    "Test Failed: "+profile.getName(),
+                                    "Credential Test Failed: "+profile.getName(),
                                     JOptionPane.ERROR_MESSAGE);
                         }
                     })).start();
@@ -631,7 +640,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
         try {
             settings = getGsonSerializer(settingsVersion).fromJson(jsonString, ExtensionSettings.class);
         } catch (JsonParseException exc) {
-            logger.error("Failed to parse Json settings. Using defaults.");
+            logger.error("Failed to parse Json settings. Using defaults. Error: "+exc.getMessage());
             settings = ExtensionSettings.builder().build();
         }
 
@@ -640,8 +649,12 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
         // load profiles
         Map<String, SigProfile> profileMap = settings.profiles();
         for (final String name : profileMap.keySet()) {
+            final SigProfile profile = profileMap.get(name);
+            if (profile.getCredentialProviderCount() <= 0) {
+                logger.error("Profile has no credential provider: "+name);
+            }
             try {
-                addProfile(profileMap.get(name));
+                addProfile(profile);
             } catch (IllegalArgumentException | NullPointerException exc) {
                 logger.error("Failed to add profile: "+name);
             }
